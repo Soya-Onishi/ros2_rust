@@ -12,10 +12,14 @@ use rosidl_runtime_rs::Message;
 
 use cstr_core::CString;
 
+pub mod client;
+pub use self::client::*;
 pub mod publisher;
 pub use self::publisher::*;
 pub mod subscription;
 pub use self::subscription::*;
+pub mod service;
+pub use self::service::*;
 
 #[cfg(not(feature = "std"))]
 use spin::{Mutex, MutexGuard};
@@ -41,6 +45,8 @@ impl Drop for NodeHandle {
 pub struct Node {
     handle: Arc<NodeHandle>,
     pub(crate) context: Arc<Mutex<rcl_context_t>>,
+    pub(crate) clients: Vec<Weak<dyn ClientBase>>,
+    pub(crate) services: Vec<Weak<dyn ServiceBase>>,
     pub(crate) subscriptions: Vec<Weak<dyn SubscriptionBase>>,
 }
 
@@ -78,8 +84,24 @@ impl Node {
         Ok(Node {
             handle,
             context: context.handle.clone(),
+            clients: alloc::vec![],
+            services: alloc::vec![],
             subscriptions: alloc::vec![],
         })
+    }
+
+    // TODO: make client's lifetime depend on node's lifetime
+    pub fn create_client<T>(
+        &mut self,
+        topic: &str,
+    ) -> Result<Arc<crate::node::client::Client<T>>, RclReturnCode>
+    where
+        T: rosidl_runtime_rs::Service + 'static,
+    {
+        let client = Arc::new(crate::node::client::Client::<T>::new(self, topic)?);
+        self.clients
+            .push(Arc::downgrade(&client) as Weak<dyn ClientBase>);
+        Ok(client)
     }
 
     // TODO: make publisher's lifetime depend on node's lifetime
@@ -92,6 +114,24 @@ impl Node {
         T: Message,
     {
         Publisher::<T>::new(self, topic, qos)
+    }
+
+    // TODO: make service's lifetime depend on node's lifetime
+    pub fn create_service<T, F>(
+        &mut self,
+        topic: &str,
+        callback: F,
+    ) -> Result<Arc<crate::node::service::Service<T>>, RclReturnCode>
+    where
+        T: rosidl_runtime_rs::Service + 'static,
+        F: FnMut(&rmw_request_id_t, &T::Request, &mut T::Response) + Sized + 'static,
+    {
+        let service = Arc::new(crate::node::service::Service::<T>::new(
+            self, topic, callback,
+        )?);
+        self.services
+            .push(Arc::downgrade(&service) as Weak<dyn ServiceBase>);
+        Ok(service)
     }
 
     // TODO: make subscription's lifetime depend on node's lifetime

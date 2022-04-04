@@ -1,4 +1,3 @@
-#![no_std]
 extern crate alloc;
 extern crate core_error;
 extern crate downcast;
@@ -29,12 +28,16 @@ pub use self::qos::*;
 use self::rcl_bindings::*;
 use wait::{WaitSet, WaitSetErrorResponse};
 
+pub use rcl_bindings::rmw_request_id_t;
+
 /// Wrapper around [`spin_once`]
 pub fn spin(node: &node::Node) -> Result<(), WaitSetErrorResponse> {
     while unsafe { rcl_context_is_valid(&mut *node.context.lock() as *mut _) } {
         if let Some(error) = spin_once(node, 500).err() {
             match error {
-                WaitSetErrorResponse::DroppedSubscription
+                WaitSetErrorResponse::DroppedClient
+                | WaitSetErrorResponse::DroppedService
+                | WaitSetErrorResponse::DroppedSubscription
                 | WaitSetErrorResponse::ReturnCode(RclReturnCode::Timeout) => continue,
                 error => return Err(error),
             };
@@ -85,8 +88,8 @@ pub fn spin_once(node: &Node, timeout_ns: i64) -> Result<(), WaitSetErrorRespons
     let number_of_subscriptions = node.subscriptions.len();
     let number_of_guard_conditions = 0;
     let number_of_timers = 0;
-    let number_of_clients = 0;
-    let number_of_services = 0;
+    let number_of_clients = node.clients.len();
+    let number_of_services = node.services.len();
     let number_of_events = 0;
 
     let context = &mut *node.context.lock();
@@ -109,6 +112,22 @@ pub fn spin_once(node: &Node, timeout_ns: i64) -> Result<(), WaitSetErrorRespons
         };
     }
 
+    for service in &node.services {
+        match wait_set.add_service(service) {
+            Ok(()) => (),
+            Err(WaitSetErrorResponse::DroppedService) => (),
+            Err(err) => return Err(err),
+        };
+    }
+
+    for client in &node.clients {
+        match wait_set.add_client(client) {
+            Ok(()) => (),
+            Err(WaitSetErrorResponse::DroppedClient) => (),
+            Err(err) => return Err(err),
+        };
+    }
+
     wait_set.wait(timeout_ns)?;
     for (i, sub) in node.subscriptions.iter().enumerate() {
         // SAFETY: The `subscriptions` entry is an array of pointers, this dereferencing is
@@ -120,6 +139,32 @@ pub fn spin_once(node: &Node, timeout_ns: i64) -> Result<(), WaitSetErrorRespons
         }
         if let Some(subscription) = sub.upgrade() {
             subscription.execute()?;
+        }
+    }
+
+    for (i, ser) in node.services.iter().enumerate() {
+        // SAFETY: The `services` entry is an array of pointers, this dereferencing is
+        // equivalent to
+        // https://github.com/ros2/rcl/blob/35a31b00a12f259d492bf53c0701003bd7f1745c/rcl/include/rcl/wait.h#L419
+        let wait_set_entry = unsafe { *wait_set.handle.services.add(i) };
+        if wait_set_entry.is_null() {
+            continue;
+        }
+        if let Some(service) = ser.upgrade() {
+            service.execute()?;
+        }
+    }
+
+    for (i, cli) in node.clients.iter().enumerate() {
+        // SAFETY: The `clients` entry is an array of pointers, this dereferencing is
+        // equivalent to
+        // https://github.com/ros2/rcl/blob/35a31b00a12f259d492bf53c0701003bd7f1745c/rcl/include/rcl/wait.h#L419
+        let wait_set_entry = unsafe { *wait_set.handle.clients.add(i) };
+        if wait_set_entry.is_null() {
+            continue;
+        }
+        if let Some(client) = cli.upgrade() {
+            client.execute()?;
         }
     }
 

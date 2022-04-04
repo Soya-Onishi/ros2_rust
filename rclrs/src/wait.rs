@@ -16,12 +16,15 @@
 // OPSEC #4584.
 
 use crate::rcl_bindings::*;
-use crate::SubscriptionBase;
+use crate::{ClientBase, ServiceBase, SubscriptionBase};
 
 use crate::error::{to_rcl_result, RclReturnCode, ToResult};
 use alloc::sync::Weak;
 use core::fmt::Display;
 use core_error::Error;
+
+#[cfg(feature = "std")]
+use parking_lot::{Mutex, MutexGuard};
 
 pub struct WaitSet {
     pub(crate) handle: rcl_wait_set_t,
@@ -39,6 +42,8 @@ impl Drop for rcl_wait_set_t {
 
 #[derive(Debug)]
 pub enum WaitSetErrorResponse {
+    DroppedClient,
+    DroppedService,
     DroppedSubscription,
     ReturnCode(RclReturnCode),
 }
@@ -46,6 +51,12 @@ pub enum WaitSetErrorResponse {
 impl Display for WaitSetErrorResponse {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::DroppedClient => {
+                write!(f, "WaitSet: Attempted to access dropped client!")
+            }
+            Self::DroppedService => {
+                write!(f, "WaitSet: Attempted to access dropped service!")
+            }
             Self::DroppedSubscription => {
                 write!(f, "WaitSet: Attempted to access dropped subscription!")
             }
@@ -131,6 +142,54 @@ impl WaitSet {
             }
         } else {
             Err(WaitSetErrorResponse::DroppedSubscription)
+        }
+    }
+
+    /// Adds a service to the WaitSet
+    ///
+    /// # Errors
+    /// - `WaitSetError::DroppedService` if the passed weak pointer refers to a dropped service
+    /// - `WaitSetError::RclError` for any `rcl` errors that occur during the process
+    pub fn add_service(
+        &mut self,
+        service: &Weak<dyn ServiceBase>,
+    ) -> Result<(), WaitSetErrorResponse> {
+        if let Some(service) = service.upgrade() {
+            let service_handle = &mut *service.handle().lock();
+            unsafe {
+                to_rcl_result(rcl_wait_set_add_service(
+                    &mut self.handle as *mut _,
+                    service_handle as *const _,
+                    core::ptr::null_mut(),
+                ))
+                .map_err(WaitSetErrorResponse::ReturnCode)
+            }
+        } else {
+            Err(WaitSetErrorResponse::DroppedService)
+        }
+    }
+
+    /// Adds a client to the WaitSet
+    ///
+    /// # Errors
+    /// - `WaitSetError::DroppedClient` if the passed weak pointer refers to a dropped client
+    /// - `WaitSetError::RclError` for any `rcl` errors that occur during the process
+    pub fn add_client(
+        &mut self,
+        client: &Weak<dyn ClientBase>,
+    ) -> Result<(), WaitSetErrorResponse> {
+        if let Some(client) = client.upgrade() {
+            let client_handle = &mut *client.handle().lock();
+            unsafe {
+                to_rcl_result(rcl_wait_set_add_client(
+                    &mut self.handle as *mut _,
+                    client_handle as *const _,
+                    core::ptr::null_mut(),
+                ))
+                .map_err(WaitSetErrorResponse::ReturnCode)
+            }
+        } else {
+            Err(WaitSetErrorResponse::DroppedClient)
         }
     }
 

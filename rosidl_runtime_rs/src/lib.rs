@@ -8,4 +8,4 @@ mod string;
 pub use string::{BoundedString, BoundedWString, String, StringExceedsBoundsError, WString};
 
 mod traits;
-pub use traits::{Message, RmwMessage, SequenceAlloc};
+pub use traits::{Message, RmwMessage, SequenceAlloc, Service};
