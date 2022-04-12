@@ -43,6 +43,10 @@ impl Drop for NodeHandle {
 /// Nodes are a core concept in ROS 2. Refer to the official ["Understanding ROS 2 nodes"][1]
 /// tutorial for an introduction.
 ///
+/// Ownership of the node is shared with all [`Publisher`]s and [`Subscription`]s created from it.
+/// That means that even after the node itself is dropped, it will continue to exist and be
+/// displayed by e.g. `ros2 topic` as long as its publishers and subscriptions are not dropped.
+///
 /// [1]: https://docs.ros.org/en/foxy/Tutorials/Understanding-ROS2-Nodes.html
 pub struct Node {
     handle: Arc<NodeHandle>,
@@ -51,6 +55,7 @@ pub struct Node {
 }
 
 impl Node {
+    /// Creates a new node in the empty namespace.
     #[allow(clippy::new_ret_no_self)]
     pub fn new(node_name: &str, context: &Context) -> Result<Node, RclReturnCode> {
         Self::new_with_namespace(node_name, "", context)
@@ -92,6 +97,9 @@ impl Node {
         })
     }
 
+    /// Creates a [`Publisher`][1].
+    ///
+    /// [1]: crate::Publisher
     // TODO: make publisher's lifetime depend on node's lifetime
     pub fn create_publisher<T>(
         &self,
@@ -104,6 +112,9 @@ impl Node {
         Publisher::<T>::new(self, topic, qos)
     }
 
+    /// Creates a [`Subscription`][1].
+    ///
+    /// [1]: crate::Subscription
     // TODO: make subscription's lifetime depend on node's lifetime
     pub fn create_subscription<T, F>(
         &mut self,
