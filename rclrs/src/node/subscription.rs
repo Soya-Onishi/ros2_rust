@@ -1,33 +1,26 @@
 use crate::error::{SubscriberErrorCode, ToResult};
 use crate::qos::QoSProfile;
-use crate::Node;
 use crate::{rcl_bindings::*, RclReturnCode};
 
 use std::borrow::Borrow;
 use std::boxed::Box;
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use rosidl_runtime_rs::{Message, RmwMessage};
 
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 
 /// Internal struct used by subscriptions.
-pub struct SubscriptionHandle {
-    handle: Mutex<rcl_subscription_t>,
-    node_handle: Arc<Mutex<rcl_node_t>>,
+pub struct SubscriptionHandle<'a> {
+    pub(crate) handle: rcl_subscription_t,
+    node_handle: &'a Mutex<rcl_node_t>,
 }
 
-impl SubscriptionHandle {
-    pub(crate) fn lock(&self) -> MutexGuard<rcl_subscription_t> {
-        self.handle.lock()
-    }
-}
-
-impl Drop for SubscriptionHandle {
+impl Drop for SubscriptionHandle<'_> {
     fn drop(&mut self) {
-        let handle = self.handle.get_mut();
+        let handle = &mut self.handle;
         let node_handle = &mut *self.node_handle.lock();
         // SAFETY: No preconditions for this function (besides the arguments being valid).
         unsafe {
@@ -55,17 +48,17 @@ pub trait SubscriptionBase {
 ///
 /// [1]: crate::spin_once
 /// [2]: crate::spin
-pub struct Subscription<T>
+pub struct Subscription<'a, T>
 where
     T: Message,
 {
-    pub(crate) handle: Arc<SubscriptionHandle>,
+    pub(crate) handle: SubscriptionHandle<'a>,
     /// The callback function that runs when a message was received.
-    pub callback: Mutex<Box<dyn FnMut(T) + 'static>>,
+    pub callback: RefCell<Box<dyn FnMut(T) + 'a>>,
     message: PhantomData<T>,
 }
 
-impl<T> Subscription<T>
+impl<'a, T> Subscription<'a, T>
 where
     T: Message,
 {
@@ -74,21 +67,20 @@ where
     /// # Panics
     /// When the topic contains interior null bytes.
     pub fn new<F>(
-        node: &Node,
-        topic: &str,
+        node_handle: &'a Mutex<rcl_node_t>,
+        topic: &'a str,
         qos: QoSProfile,
         callback: F,
     ) -> Result<Self, RclReturnCode>
     where
-        T: Message,
-        F: FnMut(T) + Sized + 'static,
+        F: FnMut(T) + Sized + 'a,
     {
         // SAFETY: Getting a zero-initialized value is always safe.
         let mut subscription_handle = unsafe { rcl_get_zero_initialized_subscription() };
         let type_support =
             <T as Message>::RmwMsg::get_type_support() as *const rosidl_message_type_support_t;
         let topic_c_string = CString::new(topic).unwrap();
-        let node_handle = &mut *node.handle.lock();
+        let handle = &mut *node_handle.lock();
 
         // SAFETY: No preconditions for this function.
         let mut subscription_options = unsafe { rcl_subscription_get_default_options() };
@@ -101,7 +93,7 @@ where
             // TODO: type support?
             rcl_subscription_init(
                 &mut subscription_handle,
-                node_handle,
+                handle,
                 type_support,
                 topic_c_string.as_ptr(),
                 &subscription_options,
@@ -109,14 +101,14 @@ where
             .ok()?;
         }
 
-        let handle = Arc::new(SubscriptionHandle {
-            handle: Mutex::new(subscription_handle),
-            node_handle: node.handle.clone(),
-        });
+        let handle = SubscriptionHandle {
+            handle: subscription_handle,
+            node_handle,
+        };
 
         Ok(Self {
             handle,
-            callback: Mutex::new(Box::new(callback)),
+            callback: RefCell::new(Box::new(callback)),
             message: PhantomData,
         })
     }
@@ -146,13 +138,12 @@ where
     // ```
     pub fn take(&self) -> Result<T, RclReturnCode> {
         let mut rmw_message = <T as Message>::RmwMsg::default();
-        let handle = &mut *self.handle.lock();
         let ret = unsafe {
             // SAFETY: The first two pointers are valid/initialized, and do not need to be valid
             // beyond the function call.
             // The latter two pointers are explicitly allowed to be NULL.
             rcl_take(
-                handle,
+                &self.handle.handle,
                 &mut rmw_message as *mut <T as Message>::RmwMsg as *mut _,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -163,7 +154,7 @@ where
     }
 }
 
-impl<T> SubscriptionBase for Subscription<T>
+impl<'a, T> SubscriptionBase for Subscription<'a, T>
 where
     T: Message,
 {
@@ -181,7 +172,7 @@ where
             }
             Err(e) => return Err(e),
         };
-        (*self.callback.lock())(msg);
+        (self.callback.borrow_mut())(msg);
         Ok(())
     }
 }

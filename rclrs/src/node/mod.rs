@@ -34,16 +34,16 @@ impl Drop for rcl_node_t {
 /// displayed by e.g. `ros2 topic` as long as its publishers and subscriptions are not dropped.
 ///
 /// [1]: https://docs.ros.org/en/rolling/Tutorials/Understanding-ROS2-Nodes.html
-pub struct Node {
-    handle: Arc<Mutex<rcl_node_t>>,
-    pub(crate) context: Arc<Mutex<rcl_context_t>>,
-    pub(crate) subscriptions: Vec<Weak<dyn SubscriptionBase>>,
+pub struct Node<'a> {
+    handle: Mutex<rcl_node_t>,
+    pub(crate) context: &'a Mutex<rcl_context_t>,
+    pub(crate) subscriptions: Vec<Weak<dyn SubscriptionBase + 'a>>,
 }
 
-impl Node {
+impl<'a> Node<'a> {
     /// Creates a new node in the empty namespace.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(node_name: &str, context: &Context) -> Result<Node, RclReturnCode> {
+    pub fn new(node_name: &str, context: &'a Context) -> Result<Node<'a>, RclReturnCode> {
         Self::new_with_namespace("", node_name, context)
     }
 
@@ -54,8 +54,8 @@ impl Node {
     pub fn new_with_namespace(
         node_ns: &str,
         node_name: &str,
-        context: &Context,
-    ) -> Result<Node, RclReturnCode> {
+        context: &'a Context,
+    ) -> Result<Node<'a>, RclReturnCode> {
         let raw_node_name = CString::new(node_name).unwrap();
         let raw_node_ns = CString::new(node_ns).unwrap();
 
@@ -80,11 +80,11 @@ impl Node {
             .ok()?;
         }
 
-        let handle = Arc::new(Mutex::new(node_handle));
+        let handle = Mutex::new(node_handle);
 
         Ok(Node {
             handle,
-            context: context.handle.clone(),
+            context: &context.handle,
             subscriptions: std::vec![],
         })
     }
@@ -190,23 +190,23 @@ impl Node {
     /// [1]: crate::Subscription
     // TODO: make subscription's lifetime depend on node's lifetime
     pub fn create_subscription<T, F>(
-        &mut self,
-        topic: &str,
+        &'a mut self,
+        topic: &'a str,
         qos: QoSProfile,
         callback: F,
-    ) -> Result<Arc<Subscription<T>>, RclReturnCode>
+    ) -> Result<Arc<Subscription<'a, T>>, RclReturnCode>
     where
         T: Message,
-        F: FnMut(T) + Sized + 'static,
+        F: FnMut(T) + Sized + 'a,
     {
-        let subscription = Arc::new(Subscription::<T>::new(self, topic, qos, callback)?);
+        let subscription = Arc::new(Subscription::<T>::new(&self.handle, topic, qos, callback)?);
         self.subscriptions
-            .push(Arc::downgrade(&subscription) as Weak<dyn SubscriptionBase>);
+            .push(Arc::downgrade(&subscription) as Weak<dyn SubscriptionBase + 'a>);
         Ok(subscription)
     }
 
     /// Returns the subscriptions that have not been dropped yet.
-    pub(crate) fn live_subscriptions(&self) -> Vec<Arc<dyn SubscriptionBase>> {
+    pub(crate) fn live_subscriptions(&'a self) -> Vec<Arc<dyn SubscriptionBase + 'a>> {
         self.subscriptions
             .iter()
             .filter_map(Weak::upgrade)

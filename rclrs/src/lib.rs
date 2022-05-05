@@ -33,10 +33,7 @@ use std::time::Duration;
 /// [1]: crate::SubscriberErrorCode
 pub fn spin_once(node: &Node, timeout: Option<Duration>) -> Result<(), RclReturnCode> {
     let live_subscriptions = node.live_subscriptions();
-    let ctx = Context {
-        handle: node.context.clone(),
-    };
-    let mut wait_set = WaitSet::new(live_subscriptions.len(), &ctx)?;
+    let mut wait_set = WaitSet::new(live_subscriptions.len(), node.context)?;
 
     for live_subscription in &live_subscriptions {
         wait_set.add_subscription(live_subscription.clone())?;

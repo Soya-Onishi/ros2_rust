@@ -4,7 +4,6 @@ use crate::{Node, RclReturnCode, ToResult};
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::string::String;
-use std::sync::Arc;
 use std::vec::Vec;
 
 use parking_lot::Mutex;
@@ -32,7 +31,7 @@ impl Drop for rcl_context_t {
 /// - the allocator used (left as the default by `rclrs`)
 ///
 pub struct Context {
-    pub(crate) handle: Arc<Mutex<rcl_context_t>>,
+    pub(crate) handle: Mutex<rcl_context_t>,
 }
 
 impl Context {
@@ -56,7 +55,7 @@ impl Context {
     pub fn new(args: impl IntoIterator<Item = String>) -> Result<Self, RclReturnCode> {
         let context = Self {
             // SAFETY: Getting a zero-initialized value is always safe
-            handle: Arc::new(Mutex::new(unsafe { rcl_get_zero_initialized_context() })),
+            handle: Mutex::new(unsafe { rcl_get_zero_initialized_context() }),
         };
         let cstring_args: Vec<CString> = args
             .into_iter()

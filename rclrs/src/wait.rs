@@ -17,7 +17,7 @@
 
 use crate::error::{to_rcl_result, RclReturnCode, ToResult};
 use crate::rcl_bindings::*;
-use crate::{Context, SubscriptionBase};
+use crate::SubscriptionBase;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,20 +26,20 @@ use std::vec::Vec;
 use parking_lot::Mutex;
 
 /// A struct for waiting on subscriptions and other waitable entities to become ready.
-pub struct WaitSet {
+pub struct WaitSet<'a> {
     handle: rcl_wait_set_t,
     // Used to ensure the context is alive while the wait set is alive.
-    _context_handle: Arc<Mutex<rcl_context_t>>,
+    _context_handle: &'a Mutex<rcl_context_t>,
     // The subscriptions that are currently registered in the wait set.
     // This correspondence is an invariant that must be maintained by all functions,
     // even in the error case.
-    subscriptions: Vec<Arc<dyn SubscriptionBase>>,
+    subscriptions: Vec<Arc<dyn SubscriptionBase + 'a>>,
 }
 
 /// A list of entities that are ready, returned by [`WaitSet::wait`].
-pub struct ReadyEntities {
+pub struct ReadyEntities<'a> {
     /// A list of subscriptions that have potentially received messages.
-    pub subscriptions: Vec<Arc<dyn SubscriptionBase>>,
+    pub subscriptions: Vec<Arc<dyn SubscriptionBase + 'a>>,
 }
 
 impl Drop for rcl_wait_set_t {
@@ -52,12 +52,15 @@ impl Drop for rcl_wait_set_t {
     }
 }
 
-impl WaitSet {
+impl<'a> WaitSet<'a> {
     /// Creates a new wait set.
     ///
     /// The given number of subscriptions is a capacity, corresponding to how often
     /// [`WaitSet::add_subscription`] may be called.
-    pub fn new(number_of_subscriptions: usize, context: &Context) -> Result<Self, RclReturnCode> {
+    pub fn new(
+        number_of_subscriptions: usize,
+        context: &'a Mutex<rcl_context_t>,
+    ) -> Result<Self, RclReturnCode> {
         let rcl_wait_set = unsafe {
             // SAFETY: Getting a zero-initialized value is always safe
             let mut rcl_wait_set = rcl_get_zero_initialized_wait_set();
@@ -71,7 +74,7 @@ impl WaitSet {
                 0,
                 0,
                 0,
-                &mut *context.handle.lock(),
+                &mut *context.lock(),
                 rcutils_get_default_allocator(),
             )
             .ok()?;
@@ -79,7 +82,7 @@ impl WaitSet {
         };
         Ok(Self {
             handle: rcl_wait_set,
-            _context_handle: context.handle.clone(),
+            _context_handle: context,
             subscriptions: Vec::new(),
         })
     }
@@ -109,19 +112,21 @@ impl WaitSet {
     /// unsafe to simultaneously wait on those wait sets.
     pub fn add_subscription(
         &mut self,
-        subscription: Arc<dyn SubscriptionBase>,
+        subscription: Arc<dyn SubscriptionBase + 'a>,
     ) -> Result<(), RclReturnCode> {
         unsafe {
             // SAFETY: I'm not sure if it's required, but the subscription pointer will remain valid
             // for as long as the wait set exists, because it's stored in self.subscriptions.
             // Passing in a null pointer for the third argument is explicitly allowed.
+
             rcl_wait_set_add_subscription(
                 &mut self.handle,
-                &*subscription.handle().lock(),
+                &subscription.handle().handle,
                 std::ptr::null_mut(),
             )
         }
         .ok()?;
+
         self.subscriptions.push(subscription);
         Ok(())
     }

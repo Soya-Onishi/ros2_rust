@@ -6,26 +6,19 @@ use crate::Node;
 use std::borrow::Cow;
 use std::ffi::CString;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 
 use rosidl_runtime_rs::{Message, RmwMessage};
 
-pub(crate) struct PublisherHandle {
-    handle: Mutex<rcl_publisher_t>,
-    node_handle: Arc<Mutex<rcl_node_t>>,
+pub(crate) struct PublisherHandle<'a> {
+    handle: rcl_publisher_t,
+    node_handle: &'a Mutex<rcl_node_t>,
 }
 
-impl PublisherHandle {
-    fn lock(&self) -> MutexGuard<rcl_publisher_t> {
-        self.handle.lock()
-    }
-}
-
-impl Drop for PublisherHandle {
+impl Drop for PublisherHandle<'_> {
     fn drop(&mut self) {
-        let handle = self.handle.get_mut();
+        let handle = &mut self.handle;
         let node_handle = &mut *self.node_handle.lock();
         // SAFETY: No preconditions for this function (besides the arguments being valid).
         unsafe {
@@ -44,15 +37,15 @@ impl Drop for PublisherHandle {
 /// Sending messages does not require calling [`spin`][1] on the publisher's node.
 ///
 /// [1]: crate::spin
-pub struct Publisher<T>
+pub struct Publisher<'a, T>
 where
     T: Message,
 {
-    pub(crate) handle: Arc<PublisherHandle>,
+    pub(crate) handle: PublisherHandle<'a>,
     message: PhantomData<T>,
 }
 
-impl<T> Publisher<T>
+impl<'a, T> Publisher<'a, T>
 where
     T: Message,
 {
@@ -60,7 +53,7 @@ where
     ///
     /// # Panics
     /// When the topic contains interior null bytes.
-    pub fn new(node: &Node, topic: &str, qos: QoSProfile) -> Result<Self, RclReturnCode>
+    pub fn new(node: &'a Node, topic: &str, qos: QoSProfile) -> Result<Self, RclReturnCode>
     where
         T: Message,
     {
@@ -90,10 +83,10 @@ where
             .ok()?;
         }
 
-        let handle = Arc::new(PublisherHandle {
-            handle: Mutex::new(publisher_handle),
-            node_handle: node.handle.clone(),
-        });
+        let handle = PublisherHandle {
+            handle: publisher_handle,
+            node_handle: &node.handle,
+        };
 
         Ok(Self {
             handle,
@@ -117,15 +110,14 @@ where
     /// Calling `publish()` is a potentially blocking call, see [this issue][1] for details.
     ///
     /// [1]: https://github.com/ros2/ros2/issues/255
-    pub fn publish<'a, M: MessageCow<'a, T>>(&self, message: M) -> Result<(), RclReturnCode> {
+    pub fn publish<'b, M: MessageCow<'b, T>>(&self, message: M) -> Result<(), RclReturnCode> {
         let rmw_message = T::into_rmw_message(message.into_cow());
-        let handle = &mut *self.handle.lock();
         let ret = unsafe {
             // SAFETY: The message type is guaranteed to match the publisher type by the type system.
             // The message does not need to be valid beyond the duration of this function call.
             // The third argument is explictly allowed to be NULL.
             rcl_publish(
-                handle,
+                &self.handle.handle,
                 rmw_message.as_ref() as *const <T as Message>::RmwMsg as *mut _,
                 std::ptr::null_mut(),
             )
