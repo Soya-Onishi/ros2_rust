@@ -54,7 +54,7 @@ where
 {
     pub(crate) handle: SubscriptionHandle<'a>,
     /// The callback function that runs when a message was received.
-    pub callback: RefCell<Box<dyn FnMut(T) + 'a>>,
+    callback: RefCell<Box<dyn FnMut(T) + 'a>>,
     message: PhantomData<T>,
 }
 
