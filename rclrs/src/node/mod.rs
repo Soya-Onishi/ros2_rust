@@ -37,7 +37,7 @@ impl Drop for rcl_node_t {
 pub struct Node<'a> {
     handle: Mutex<rcl_node_t>,
     pub(crate) context: &'a Mutex<rcl_context_t>,
-    pub(crate) subscriptions: Vec<Weak<dyn SubscriptionBase + 'a>>,
+    pub(crate) subscriptions: Mutex<Vec<Weak<dyn SubscriptionBase + 'a>>>,
 }
 
 impl<'a> Node<'a> {
@@ -85,7 +85,7 @@ impl<'a> Node<'a> {
         Ok(Node {
             handle,
             context: &context.handle,
-            subscriptions: std::vec![],
+            subscriptions: Mutex::new(std::vec![]),
         })
     }
 
@@ -190,7 +190,7 @@ impl<'a> Node<'a> {
     /// [1]: crate::Subscription
     // TODO: make subscription's lifetime depend on node's lifetime
     pub fn create_subscription<T, F>(
-        &'a mut self,
+        &'a self,
         topic: &'a str,
         qos: QoSProfile,
         callback: F,
@@ -201,13 +201,15 @@ impl<'a> Node<'a> {
     {
         let subscription = Arc::new(Subscription::<T>::new(&self.handle, topic, qos, callback)?);
         self.subscriptions
+            .lock()
             .push(Arc::downgrade(&subscription) as Weak<dyn SubscriptionBase + 'a>);
         Ok(subscription)
     }
 
     /// Returns the subscriptions that have not been dropped yet.
-    pub(crate) fn live_subscriptions(&'a self) -> Vec<Arc<dyn SubscriptionBase + 'a>> {
+    pub(crate) fn live_subscriptions(&self) -> Vec<Arc<dyn SubscriptionBase + 'a>> {
         self.subscriptions
+            .lock()
             .iter()
             .filter_map(Weak::upgrade)
             .collect()
