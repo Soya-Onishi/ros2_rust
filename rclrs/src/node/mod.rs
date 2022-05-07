@@ -40,11 +40,20 @@ pub struct Node {
     pub(crate) subscriptions: Vec<Weak<dyn SubscriptionBase>>,
 }
 
+/// This structure encapsulates options for `Node` creation
+pub struct NodeOption {
+    pub(crate) handle: rcl_node_options_t,
+}
+
 impl Node {
     /// Creates a new node in the empty namespace.
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(node_name: &str, context: &Context) -> Result<Node, RclReturnCode> {
-        Self::new_with_namespace("", node_name, context)
+    pub fn new(
+        node_name: &str,
+        context: &Context,
+        node_option: &NodeOption,
+    ) -> Result<Node, RclReturnCode> {
+        Self::new_with_namespace("", node_name, context, node_option)
     }
 
     /// Creates a new node in a namespace.
@@ -55,6 +64,7 @@ impl Node {
         node_ns: &str,
         node_name: &str,
         context: &Context,
+        node_option: &NodeOption,
     ) -> Result<Node, RclReturnCode> {
         let raw_node_name = CString::new(node_name).unwrap();
         let raw_node_ns = CString::new(node_ns).unwrap();
@@ -64,8 +74,6 @@ impl Node {
         let context_handle = &mut *context.handle.lock();
 
         unsafe {
-            // SAFETY: No preconditions for this function.
-            let node_options = rcl_node_get_default_options();
             // SAFETY: The node handle is zero-initialized as expected by this function.
             // The strings and node options are copied by this function, so we don't need
             // to keep them alive.
@@ -75,7 +83,7 @@ impl Node {
                 raw_node_name.as_ptr(),
                 raw_node_ns.as_ptr(),
                 context_handle,
-                &node_options,
+                &node_option.handle,
             )
             .ok()?;
         }
@@ -244,5 +252,54 @@ impl Node {
 
         debug_assert_eq!(ret, 0);
         domain_id
+    }
+}
+
+impl Default for NodeOption {
+    /// Return the default node options.
+    /// Default option values are
+    ///   - domain_id: `RCL_NODE_OPTIONS_DEFAULT_DOMAIN_ID`
+    ///   - allocator: `rcl_get_default_allocator()`
+    ///   - use_global_arguments: `true`
+    ///   - arguments: `rcl_get_zero_initialized_arguments`
+    fn default() -> Self {
+        // SAFETY: No preconditions for this function.
+        let raw_option = unsafe { rcl_node_get_default_options() };
+        NodeOption { handle: raw_option }
+    }
+}
+
+impl NodeOption {
+    pub fn set_domain_id(&mut self, domain_id: usize) {
+        self.handle.domain_id = domain_id;
+    }
+
+    pub fn set_use_global_arguments(&mut self, flag: bool) {
+        self.handle.use_global_arguments = flag;
+    }
+
+    pub fn set_arguments(&mut self, args: impl IntoIterator<Item = String>) {
+        let cstring_args: Vec<*const c_char> = args
+            .into_iter()
+            .map(|arg| CString::new(arg).unwrap())
+            .map(|arg| arg.as_ptr())
+            .collect();
+
+        unsafe {
+            rcl_parse_arguments(
+                cstring_args.len() as i32,
+                cstring_args.as_ptr(),
+                self.handle.allocator.clone(),
+                &mut self.handle.arguments,
+            );
+        }
+    }
+
+    /// Set flag to enable or disable [rosout][1] for node.
+    /// If set true, rosout is enabled.
+    ///
+    /// [1]: http://wiki.ros.org/rosout
+    pub fn set_enable_rosout(&mut self, flag: bool) {
+        self.handle.enable_rosout = flag;
     }
 }

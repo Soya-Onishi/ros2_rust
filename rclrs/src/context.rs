@@ -1,5 +1,5 @@
 use crate::rcl_bindings::*;
-use crate::{Node, RclReturnCode, ToResult};
+use crate::{Node, NodeOption, RclReturnCode, ToResult};
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -111,7 +111,7 @@ impl Context {
     /// assert!(node.is_ok());
     /// ```
     pub fn create_node(&self, node_name: &str) -> Result<Node, RclReturnCode> {
-        Node::new(node_name, self)
+        Node::new(node_name, self, &NodeOption::default())
     }
 
     /// Creates a node in a namespace.
@@ -132,7 +132,7 @@ impl Context {
         node_namespace: &str,
         node_name: &str,
     ) -> Result<Node, RclReturnCode> {
-        Node::new_with_namespace(node_namespace, node_name, self)
+        Node::new_with_namespace(node_namespace, node_name, self, &NodeOption::default())
     }
 
     /// Checks if the context is still valid.
