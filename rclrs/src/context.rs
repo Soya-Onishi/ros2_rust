@@ -1,5 +1,5 @@
 use crate::rcl_bindings::*;
-use crate::{Node, NodeOption, RclReturnCode, ToResult};
+use crate::{Node, NodeOptions, RclReturnCode, ToResult};
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -111,12 +111,12 @@ impl Context {
     /// assert!(node.is_ok());
     /// ```
     pub fn create_node(&self, node_name: &str) -> Result<Node, RclReturnCode> {
-        Node::new(node_name, self, &NodeOption::default())
+        Node::new(node_name, self)
     }
 
     /// Creates a node in a namespace.
     ///
-    /// Convenience function equivalent to [`Node::new_with_namespace`][1].
+    /// Convenience function equivalent to [`Node::new_with_namespace`][1] with default options.
     ///
     /// [1]: crate::Node::new_with_namespace
     ///
@@ -132,7 +132,31 @@ impl Context {
         node_namespace: &str,
         node_name: &str,
     ) -> Result<Node, RclReturnCode> {
-        Node::new_with_namespace(node_namespace, node_name, self, &NodeOption::default())
+        Node::new_with_namespace(node_namespace, node_name, self)
+    }
+
+    /// Create a node in a namespace and options.
+    ///
+    /// Convenience function equivalent to [`Node::new_with_namespace_and_options`][1] with options.
+    ///
+    /// [1]: crate::Node::new_with_namespace_options
+    ///
+    /// # Example
+    /// ```
+    /// # use rclrs::{Context, NodeOptions};
+    /// let mut options = NodeOptions::default();
+    /// options.set_domain_id(42);
+    /// let ctx = Context::new([]).unwrap();
+    /// let node = ctx.create_node_with_namespace_and_options("/my/nested/namespace", "options_node", &options).unwrap();
+    /// assert_eq!(node.domain_id(), 42);
+    /// ```
+    pub fn create_node_with_namespace_and_options(
+        &self,
+        node_namespace: &str,
+        node_name: &str,
+        options: &NodeOptions,
+    ) -> Result<Node, RclReturnCode> {
+        Node::new_with_namespace_and_options(node_namespace, node_name, self, options)
     }
 
     /// Checks if the context is still valid.
